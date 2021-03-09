@@ -45,6 +45,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     Q = [Q1, Q2, Q3, Q4]
     D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
+    # D_value = np.load("reduction_graph/D_value.npy")
     # _, D_value, _ = load_reduction_graph(nz)
     # D_value[7, 1] = 0
     # D_value[7, 14] = 1
