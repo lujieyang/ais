@@ -2,6 +2,8 @@ import numpy as np
 import argparse
 import cvxpy as cp
 import learn_graph as lg
+import itertools
+import multiprocessing as mp
 import gurobipy as gp
 
 from gurobipy import GRB
@@ -14,47 +16,71 @@ parser.add_argument("--AIS_state_size", type=int, help="Load the transition prob
 args = parser.parse_args()
 
 
-def runGUROBIImpl(n, theta=0.5, nIter=10):
-    for i in range(nIter):
-        with gp.Env(empty=True) as env:
-            env.setParam("OutputFlag", 0)
-            env.start()
-            with gp.Model(env=env) as model:
-                C = np.random.rand(n, n)
-                DCG = np.random.rand(n, n)
-                IDCG = np.random.rand()
+def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+    with gp.Env(empty=True) as env:
+        env.setParam("OutputFlag", 0)
+        env.start()
+        with gp.Model(env=env) as model:
+            B1 = model.addVars(nz, nz, ub=1)
+            B = []
+            P_yzu = []
+            for i in range(nu):
+                B.append(model.addVars(nz, nz, ub=1))
+                if P_ybu is not None:
+                    ny = P_ybu.shape[0]
+                    P_ybu.append(model.addVars(ny, nz, ub=1))
+            D = model.addVars(nz, nb, vtype=GRB.BINARY)
+            r = model.addVars(nz, nu)
+            if C_det is not None:
+                B_det = []
+                for i in range(C_det.shape[2]):
+                    B_det.append(model.addVars(nz, nz, vtype=GRB.BINARY))
 
-                P = model.addVars(n, n, vtype=GRB.BINARY)
-                obj = sum([C[i, j] * P[i, j] for i in range(n) for j in range(n)])
-                constrLHS = sum([DCG[i, j] * P[i, j] for i in range(n) for j in range(n)])
+            obj = 0
+            for j in range(nb):
+                for i in range(nu):
+                    # obj += sum([(sum([B[i][k, l] * D[l, j] for l in range(nz)]) - sum([D[k, l] * C[l, j] for l in range(nb)]))^2 for k in range(nz)])
+                    obj += sum([B[i][0, l] * D[l, j] for l in range(nz)])
+                    # obj += sum([(B[i][k, l] * D[l, j] - D[k, l] * C[l, j]) for k in range(nz) for l in range(nz)])
+                    obj += (R[j, i] - sum([r[k, i] * D[k, j] for k in range(nz)]))* (R[j, i] - sum([r[k, i] * D[k, j] for k in range(nz)]))
+                    model.addConstr((B[i].sum("*", i) == 1 for i in range(nz)))
 
-                model.setObjective(obj, GRB.MINIMIZE)
-                model.addConstr(constrLHS >= theta * IDCG)
-                model.addConstrs((P.sum("*", i) == 1 for i in range(n)))
-                model.addConstrs((P.sum(i, "*") == 1 for i in range(n)))
+            model.setObjective(obj, GRB.MINIMIZE)
+            model.addConstrs((D.sum("*", i) == 1 for i in range(nz)))
+            model.addConstrs((D.sum(i, "*") >= 1 for i in range(nz)))
 
-                model.optimize()
+            model.optimize()
 
-                if not (model.status == GRB.OPTIMAL): print("unsuccessful...")
+            if not (model.status == GRB.OPTIMAL):
+                print("unsuccessful...")
+            else:
+                print("Objective: ", obj.getValue())
 
 def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     Q1 = cp.Variable((nz, nb), nonneg=True)
     Q2 = cp.Variable((nz, nb), nonneg=True)
     Q3 = cp.Variable((nz, nb), nonneg=True)
     Q4 = cp.Variable((nz, nb), nonneg=True)
+    if C_det is not None:
+        Q_det = []
+        for k in range(C_det.shape[2]):
+            Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
     D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
     # D_value = np.load("reduction_graph/D_value.npy")
-    # _, D_value, _ = load_reduction_graph(nz)
-    # D_value[7, 1] = 0
-    # D_value[7, 14] = 1
     # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
-    Q_det = []
-    P_ybu_bar = []
+    if P_ybu is not None:
+        P_ybu_bar = []
+        ny = P_ybu.shape[0]
+        for i in range(nu):
+            P_ybu_bar.append(cp.Variable((ny, nb), nonneg=True))
     loss = 0
     constraints = []
+    constraints += [cp.sum(D) == nb,
+                    cp.matmul(np.ones((1, nz)), D) == 1,
+                    cp.matmul(D, np.ones((nb, 1))) >= 1, ]
     for j in range(nb):
         b_one_hot = np.zeros(nb)
         b_one_hot[j] = 1
@@ -63,20 +89,13 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             loss += cp.norm(cp.matmul(Q[i], b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
             # Match reward
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
-            constraints += [cp.sum(D) == nb,
-                            cp.matmul(np.ones((1, nz)), D) == 1,
-                            cp.matmul(np.ones((1, nz)), Q[i]) == 1,
-                            cp.matmul(D, np.ones((nb, 1))) >= 1, ]
-
+            constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
             if P_ybu is not None:
-                ny = P_ybu.shape[0]
-                P_ybu_bar.append(cp.Variable((ny, nb), nonneg=True))
-                loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i]@ b_one_hot)
+                loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
                 constraints += [cp.matmul(np.ones((1, nz)), D) == cp.matmul(np.ones((1, ny)), P_ybu_bar[i]), ]
 
         if C_det is not None:
             for k in range(C_det.shape[2]):
-                Q_det.append(cp.Variable((nz, nb), boolean=True))
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
                 # B_det is also part of permutation matrix
                 constraints += [cp.matmul(np.ones((1, nz)), D) == cp.matmul(np.ones((1, nz)), Q_det[k]), ]
@@ -101,13 +120,100 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
+def parallel_convex_opt(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+    pool = mp.Pool(mp.cpu_count())
+    # Ds = []
+    for i in itertools.product(np.eye(nz), repeat=nb-nz):
+        D = np.hstack((np.eye(nz), np.array(i).T))
+        # Ds.append(D)
+        pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
+    # parallel_results = [pool.apply(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu)) for D in Ds]
+    pool.close()
+    pool.join()
+    ind = np.argmin(np.array(parallel_loss))
+    # loss = [result[0] for result in parallel_results]
+    # ind = np.argmin(np.array(loss))
+    # return parallel_results[ind][1:]
+    return parallel_matrices[ind]
+
+
+def collect_result(result):
+    global parallel_loss, parallel_matrices
+    parallel_loss.append(result[0])
+    parallel_matrices.append(result[1:])
+
+
+def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
+    assert(np.sum(D) == nb)
+    assert((np.ones((1, nz))@D == 1).all())
+    assert((D@np.ones((nb, 1)) >= 1).all())
+    B = []
+    for i in range(nu):
+        B.append(cp.Variable((nz, nz), nonneg=True))
+    if C_det is not None:
+        B_det = []
+        for k in range(C_det.shape[2]):
+            B_det.append(cp.Variable((nz, nz), boolean=True))
+
+    r = cp.Variable((nz, nu))
+    if P_ybu is not None:
+        P_yzu = []
+        ny = P_ybu.shape[0]
+        for i in range(nu):
+            P_yzu.append(cp.Variable((ny, nz), nonneg=True))
+
+    loss = 0
+    constraints = []
+    for j in range(nb):
+        b_one_hot = np.zeros(nb)
+        b_one_hot[j] = 1
+        for i in range(nu):
+            # Match transition distributions
+            loss += cp.norm(cp.matmul(B[i], D@b_one_hot)-D@C[:, :, i]@b_one_hot)
+            # Match reward
+            loss += cp.norm(R[j, i] - cp.matmul(r[:, i], D@b_one_hot))
+            constraints += [cp.matmul(np.ones((1, nz)), B[i]) == 1,]
+
+            if P_ybu is not None:
+                loss += cp.norm(cp.matmul(P_yzu[i], D@b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
+                constraints += [cp.matmul(np.ones((1, ny)), P_yzu[i]) == 1, ]
+
+        if C_det is not None:
+            for k in range(C_det.shape[2]):
+                loss += cp.norm(cp.matmul(B_det[k], D@b_one_hot) - D@C_det[:, :, k] @ b_one_hot)
+                # B_det is also part of permutation matrix
+                constraints += [cp.matmul(np.ones((1, nz)), B_det[k]) == 1, ]
+
+    objective = cp.Minimize(loss)
+    problem = cp.Problem(objective, constraints)
+
+    # solve problem
+    problem.solve(solver=cp.GUROBI, verbose=False)
+
+    if not (problem.status == cp.OPTIMAL):
+        print("unsuccessful...")
+    else:
+        print("loss ", loss.value)
+
+    B_out = []
+    for i in range(len(B)):
+        B_out.append(B[i].value)
+    if C_det is not None:
+        B_det_out = []
+        for i in range(len(B_det)):
+            B_det_out.append(B_det[i].value)
+        return np.array(B_det_out), B, D.value, r_bar.value
+    else:
+        return loss.value, np.array(B_out), D, r.value
+
+
 def value_iteration(B, r, nz, na, epsilon=0.0001, discount_factor=0.95):
     """
     Value Iteration Algorithm.
 
     Args:
         B: numpy array of size(na, nz, nz). transition probabilities of the environment P(z(t+1)|z(t), a(t)).
-        r: numpy array of size (nz, na). reward function r(z(t),a(t))
+        r: numpy array of size (na, nz). reward function r(z(t),a(t))
         nz: number of AIS in the environment.
         na: number of actions in the environment.
         epsilon: We stop evaluation once our value function change is less than theta for all states.
@@ -244,6 +350,14 @@ def save_reduction_graph(Q, D, r_bar, nz, Q_det=None):
         np.save("reduction_graph/Q_det_{}".format(nz), Q_det)
 
 
+def save_B_r(B, D, r, nz, B_det=None):
+    np.save("reduction_graph/B_{}".format(nz), B)
+    np.save("reduction_graph/D_wB_{}".format(nz), D)
+    np.save("reduction_graph/r_{}".format(nz), r)
+    if B_det is not None:
+        np.save("reduction_graph/Q_det_{}".format(nz), B_det)
+
+
 def load_reduction_graph(nz, det=False):
     Q = np.load("reduction_graph/Q_{}.npy".format(nz))
     D = np.load("reduction_graph/D_{}.npy".format(nz))
@@ -271,16 +385,23 @@ if __name__ == "__main__":
     R = np.load("reduction_graph/R.npy")
     P_ybu = np.load("reduction_graph/P_ybu.npy")
     y_a = np.load("graph/y_a.npy")
+    parallel_loss = []
+    parallel_matrices = []
 
     if args.load_graph:
         Q, D, r_bar = load_reduction_graph(nz)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
+        # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
+        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
+        r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz)
+            # save_reduction_graph(Q, D, r_bar, nz)
+            save_B_r(B, D, r, nz)
 
-    B = Q@D.T@np.linalg.inv(D@D.T)
-    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+
+    # B = Q@D.T@np.linalg.inv(D@D.T)
+    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
