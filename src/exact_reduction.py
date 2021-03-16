@@ -4,6 +4,7 @@ import cvxpy as cp
 import learn_graph as lg
 import itertools
 import multiprocessing as mp
+from stirling_assignment import Stirling_Assignments
 import gurobipy as gp
 
 from gurobipy import GRB
@@ -21,16 +22,15 @@ def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         env.setParam("OutputFlag", 0)
         env.start()
         with gp.Model(env=env) as model:
-            B1 = model.addVars(nz, nz, ub=1)
-            B = []
+            Q = []
             P_yzu = []
             for i in range(nu):
-                B.append(model.addVars(nz, nz, ub=1))
+                Q.append(model.addVars(nz, nb, ub=1))
                 if P_ybu is not None:
                     ny = P_ybu.shape[0]
                     P_ybu.append(model.addVars(ny, nz, ub=1))
             D = model.addVars(nz, nb, vtype=GRB.BINARY)
-            r = model.addVars(nz, nu)
+            # r = model.addVars(nb, nu)
             if C_det is not None:
                 B_det = []
                 for i in range(C_det.shape[2]):
@@ -40,14 +40,16 @@ def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             for j in range(nb):
                 for i in range(nu):
                     # obj += sum([(sum([B[i][k, l] * D[l, j] for l in range(nz)]) - sum([D[k, l] * C[l, j] for l in range(nb)]))^2 for k in range(nz)])
-                    obj += sum([B[i][0, l] * D[l, j] for l in range(nz)])
-                    # obj += sum([(B[i][k, l] * D[l, j] - D[k, l] * C[l, j]) for k in range(nz) for l in range(nz)])
-                    obj += (R[j, i] - sum([r[k, i] * D[k, j] for k in range(nz)]))* (R[j, i] - sum([r[k, i] * D[k, j] for k in range(nz)]))
-                    model.addConstr((B[i].sum("*", i) == 1 for i in range(nz)))
+                    # obj += sum([(Q[i][l, j]-C[k, j]*D[l, k])**2 for l in range(nz) for k in range(nb)])
+                    obj += sum([(C[k, j]*D[0, k]) for k in range(nb)])
+                    # obj += (R[j, i] - sum([r[k, i] * D[k, j] for k in range(nz)]))
 
             model.setObjective(obj, GRB.MINIMIZE)
-            model.addConstrs((D.sum("*", i) == 1 for i in range(nz)))
+            model.addConstrs((D.sum("*", i) == 1 for i in range(nb)))
             model.addConstrs((D.sum(i, "*") >= 1 for i in range(nz)))
+            for i in range(nu):
+                model.addConstrs((Q[i].sum("*", k) == 1 for k in range(nb)))
+
 
             model.optimize()
 
@@ -94,6 +96,11 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
                 constraints += [cp.matmul(np.ones((1, nz)), D) == cp.matmul(np.ones((1, ny)), P_ybu_bar[i]), ]
 
+            for l in range(1):
+                if j != l:
+                    constraints += [Q[i][:, j] - Q[i][:, l] <= sum([cp.abs(D[k, j] - D[k, l]) for k in range(nz)]),
+                                    -sum([cp.abs(D[k, j] - D[k, l]) for k in range(nz)]) <= Q[i][:, j] - Q[i][:, l],]
+
         if C_det is not None:
             for k in range(C_det.shape[2]):
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
@@ -136,13 +143,18 @@ def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None)
     return B, D, r
 
 
-def parallel_convex_opt(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+def parallel_convex_opt(nz, nb, nu, C, R, sample_D=False, C_det=None, P_ybu=None):
+    """
+    sample_D: boolean. True:
+    """
     pool = mp.Pool(mp.cpu_count())
     # Ds = []
-    for i in itertools.product(np.eye(nz), repeat=nb-nz):
-        D = np.hstack((np.eye(nz), np.array(i).T))
-        # Ds.append(D)
-        pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
+    if sample_D:
+        pass
+    else:
+        s = Stirling_Assignments(nb, nz)
+        for D in s.all_partitions_generator_D_rep():
+            pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
     # parallel_results = [pool.apply(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu)) for D in Ds]
     pool.close()
     pool.join()
@@ -447,9 +459,11 @@ if __name__ == "__main__":
     if args.load_graph:
         Q, D, r_bar = load_reduction_graph(nz)
     else:
-        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
+        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
-        B, D, r = bilinear_alternation(nz, nb, nu, C, R)
+        # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
+        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
         r = r.T
         if args.save_graph:
             # save_reduction_graph(Q, D, r_bar, nz)
