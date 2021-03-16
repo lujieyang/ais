@@ -120,6 +120,22 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
+def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None):
+    B = np.random.random((nz, nz, nu))
+    B = B/np.sum(B, axis=0)
+    B = np.einsum('ijk->kij', B)
+    old_B = B
+    r = np.zeros((nz, nu))
+    converge = False
+
+    while not converge:
+        D = solve_D(nz, nb, nu, C, R, B, r, C_det, P_ybu)
+        B, r = solve_B_r(nz, nb, nu, C, R, D, C_det, P_ybu)
+        if np.linalg.norm(B-old_B) < epsilon:
+            converge = True
+    return B, D, r
+
+
 def parallel_convex_opt(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     pool = mp.Pool(mp.cpu_count())
     # Ds = []
@@ -141,6 +157,46 @@ def collect_result(result):
     global parallel_loss, parallel_matrices
     parallel_loss.append(result[0])
     parallel_matrices.append(result[1:])
+
+
+def solve_D(nz, nb, nu, C, R, B, r, C_det=None, P_ybu=None, B_det=None, P_yzu=None):
+    for i in range(B.shape[0]):
+        assert((abs(np.ones((1, nz))@B[i]-1) < 1e-5).all())
+    D = cp.Variable((nz, nb), boolean=True)
+
+    loss = 0
+    constraints = []
+    constraints += [cp.sum(D) == nb,
+                    cp.matmul(np.ones((1, nz)), D) == 1,
+                    cp.matmul(D, np.ones((nb, 1))) >= 1, ]
+    for j in range(nb):
+        b_one_hot = np.zeros(nb)
+        b_one_hot[j] = 1
+        for i in range(nu):
+            # Match transition distributions
+            loss += cp.norm(B[i]@cp.matmul(D, b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
+            # Match reward
+            loss += cp.norm(R[j, i] - r[:, i]@cp.matmul(D, b_one_hot))
+
+            if P_ybu is not None:
+                loss += cp.norm(cp.matmul(P_yzu[i], D@b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
+
+        if C_det is not None:
+            for k in range(C_det.shape[2]):
+                loss += cp.norm(cp.matmul(B_det[k], D@b_one_hot) - D@C_det[:, :, k] @ b_one_hot)
+
+    objective = cp.Minimize(loss)
+    problem = cp.Problem(objective, constraints)
+
+    # solve problem
+    problem.solve(solver=cp.GUROBI, verbose=False)
+
+    if not (problem.status == cp.OPTIMAL):
+        print("unsuccessful...")
+    else:
+        print("loss ", loss.value)
+
+    return D.value
 
 
 def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
@@ -204,7 +260,7 @@ def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
             B_det_out.append(B_det[i].value)
         return np.array(B_det_out), B, D.value, r_bar.value
     else:
-        return loss.value, np.array(B_out), D, r.value
+        return np.array(B_out), r.value
 
 
 def value_iteration(B, r, nz, na, epsilon=0.0001, discount_factor=0.95):
@@ -393,7 +449,7 @@ if __name__ == "__main__":
     else:
         # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
-        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
+        B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         r = r.T
         if args.save_graph:
             # save_reduction_graph(Q, D, r_bar, nz)
