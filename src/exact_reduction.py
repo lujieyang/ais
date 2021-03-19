@@ -70,7 +70,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     Q = [Q1, Q2, Q3, Q4]
     # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    D_value = np.load("reduction_graph/D_wB_11.npy")
+    D_value = np.load("reduction_graph/D_11.npy")
     D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
@@ -187,6 +187,8 @@ def parallel_convex_opt(nz, nb, nu, C, R, sample_D=None, C_det=None, P_ybu=None)
             Ds.append(D)
         ind = np.random.choice(len(Ds), sample_D, replace=False)
         for i in ind:
+            if i % 1000 == 0:
+                print(i, "/", sample_D)
             D = Ds[i]
             pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
     else:
@@ -196,8 +198,12 @@ def parallel_convex_opt(nz, nb, nu, C, R, sample_D=None, C_det=None, P_ybu=None)
     pool.close()
     pool.join()
     ind = np.argmin(np.array(parallel_loss))
-    np.save("reduction_graph/parallel_loss_{}".format(nz), parallel_loss)
-    np.save("reduction_graph/parallel_matrices_{}".format(nz), parallel_matrices)
+    if sample_D is not None:
+        np.save("reduction_graph/sample/parallel_loss_{}".format(nz), parallel_loss)
+        np.save("reduction_graph/sample/parallel_matrices_{}".format(nz), parallel_matrices)
+    else:
+        np.save("reduction_graph/parallel_loss_{}".format(nz), parallel_loss)
+        np.save("reduction_graph/parallel_matrices_{}".format(nz), parallel_matrices)
     # loss = [result[0] for result in parallel_results]
     # ind = np.argmin(np.array(loss))
     # return parallel_results[ind][1:]
@@ -464,8 +470,10 @@ def save_reduction_graph(Q, D, r_bar, nz, Q_det=None):
         np.save(folder_name + "r_fit_{}".format(nz), r_bar)
 
 
-def save_B_r(B, D, r, nz, B_det=None):
+def save_B_r(B, D, r, nz, B_det=None, sample=False):
     folder_name = "reduction_graph/"
+    if sample:
+        folder_name += "sample/"
     if B_det is not None:
         folder_name += "det/"
         np.save(folder_name + "B_{}".format(nz), B)
@@ -494,8 +502,10 @@ def load_reduction_graph(nz, det=False):
         return Q, D, r_bar
 
 
-def load_B_r(nz, det=False):
+def load_B_r(nz, det=False, sample=False):
     folder_name = "reduction_graph/"
+    if sample:
+        folder_name += "sample/"
     if det:
         folder_name += "det/"
         B = np.load(folder_name + "B_{}.npy".format(nz))
@@ -531,8 +541,8 @@ if __name__ == "__main__":
     parallel_matrices = []
 
     if args.load_graph:
-        Q, D, r_bar = load_reduction_graph(nz)
-        # B, D, r = load_B_r(nz)
+        # Q, D, r_bar = load_reduction_graph(nz)
+        B, D, r = load_B_r(nz)
     else:
         # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
