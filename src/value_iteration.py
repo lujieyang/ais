@@ -6,10 +6,11 @@ import random
 parser = argparse.ArgumentParser(description='This code runs AIS using the Next Observation prediction version')
 parser.add_argument("--short_traj", help="Collect samples for short trajectory(not until reaching the goal)",action="store_true")
 parser.add_argument("--env_not_terminate", help="Simulation does not terminate when goal state is reached",action="store_true")
+parser.add_argument("--pomdp", help="Use graphs learned for the pomdp model",action="store_true")
 args = parser.parse_args()
 args.load_policy = False
 
-def value_iteration(A, B, nz, na, epsilon=0.0001, discount_factor=0.95):
+def value_iteration(A, B, nz, na, Ot, epsilon=0.0001, discount_factor=0.95):
     """
     Value Iteration Algorithm.
 
@@ -26,10 +27,13 @@ def value_iteration(A, B, nz, na, epsilon=0.0001, discount_factor=0.95):
     """
 
     def one_step_lookahead(V, a, z):
-
-        prob_O = B[z,a,:]
-        prob_z = A[z,Ot[:,1].astype(int),a,:]
-        v = np.sum(prob_O * (Ot[:,0] + discount_factor * prob_z@V))
+        if len(B.shape) > 2:
+            prob_O = B[z,a,:]
+            prob_z = A[z,Ot[:,1].astype(int),a,:]
+        else:
+            prob_O = B[z, :]
+            prob_z = A[z, a, :]
+        v = np.sum(prob_O * (Ot[:, 0] + discount_factor * prob_z@V))
 
         return v
 
@@ -87,8 +91,12 @@ def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
             # sample z from initial distribution
             z = np.where(np.random.multinomial(1,initial_distribution)==1)[0][0]
             # check z agrees with the first observation
-            if (A[:,y,:, z]>epsilon).any():
-                break
+            if len(A.shape)>3:
+                if (A[:,y,:, z]>epsilon).any():
+                    break
+            else:
+                if (B[z, Ot[:, 1]==y]>epsilon).any():
+                    break
 
 
         for j in range(1000):
@@ -97,7 +105,10 @@ def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
             y, reward, done, _ = lg.env.step(action)
             reward_episode.append(reward)
 
-            z = np.where(np.random.multinomial(1, A[z, y, action, :]) == 1)[0][0]
+            if len(A.shape) > 3:
+                z = np.where(np.random.multinomial(1, A[z, y, action, :]) == 1)[0][0]
+            else:
+                z = np.where(np.random.multinomial(1, A[z, action, :]) == 1)[0][0]
 
             if done:
                 break
@@ -112,12 +123,11 @@ def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
     return np.mean(returns)
 
 if __name__ == "__main__":
-    nz = 15
-    seed = 60
+    nz = 18
+    seed = 42
     A, B, initial_distribution, Ot = lg.load_graph(nz, seed, args)
-    na = B.shape[1]
-    assert(na==4)
-    policy, v = value_iteration(A, B, nz, na, discount_factor = 0.95)
+    na = 4
+    policy, v = value_iteration(A, B, nz, na, Ot, discount_factor=0.95)
     returns = eval_performance(policy, A)
     print("Performance: ",returns)
     # lg.plot_B(B, nz, Ot)

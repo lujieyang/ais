@@ -79,7 +79,7 @@ for r in range(len(y)):
             N_ybu[yr[t], ind, ar[t]] += 1
             # C[:, ind, ar[t]] = Pbb
 
-        bn = D_[ yr[t]]@P_xu[ar[t]]@bn
+        bn = D_[yr[t]]@P_xu[ar[t]]@bn
         bn = bn / np.sum(bn, axis=0)
 
 P_ybu = N_ybu/np.sum(N_ybu, axis=0)[None, :]

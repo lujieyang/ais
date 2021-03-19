@@ -83,29 +83,61 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     constraints += [cp.sum(D) == nb,
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
-    for j in range(nb):
-        b_one_hot = np.zeros(nb)
-        b_one_hot[j] = 1
-        for i in range(nu):
+    z = []
+    for i in range(nu):
+        constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
+        if P_ybu is not None:
+            constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
+        for j in range(nb):
+            b_one_hot = np.zeros(nb)
+            b_one_hot[j] = 1
             # Match transition distributions
             loss += cp.norm(cp.matmul(Q[i], b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
             # Match reward
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
-            constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
-            if P_ybu is not None:
+
+            for l in range(j+1, nb):
+                z.append((cp.Variable(boolean=True)))
+                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-z[-1],
+                                D[:, j] - D[:, l] <= 1-z[-1],
+                                D[:, j] - D[:, l] >= z[-1]-1]
+
+        constraints += [sum(z[-int(nb*(nb-1)/2):]) >= nb-nz, sum(z[-int(nb*(nb-1)/2):]) <= (nb-nz+1)*(nb-nz)/2]
+
+    # Match observation prediction
+    if P_ybu is not None:
+        for i in range(nu):
+            constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
+            for j in range(nb):
+                b_one_hot = np.zeros(nb)
+                b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
-                constraints += [cp.matmul(np.ones((1, nz)), D) == cp.matmul(np.ones((1, ny)), P_ybu_bar[i]), ]
+                for l in range(j + 1, nb):
+                    z.append((cp.Variable(boolean=True)))
+                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - z[-1],
+                                    D[:, j] - D[:, l] <= 1 - z[-1],
+                                    D[:, j] - D[:, l] >= z[-1] - 1]
 
-            for l in range(1):
-                if j != l:
-                    constraints += [Q[i][:, j] - Q[i][:, l] <= sum([cp.abs(D[k, j] - D[k, l]) for k in range(nz)]),
-                                    -sum([cp.abs(D[k, j] - D[k, l]) for k in range(nz)]) <= Q[i][:, j] - Q[i][:, l],]
+        constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
+                    sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
 
-        if C_det is not None:
-            for k in range(C_det.shape[2]):
+
+    if C_det is not None:
+        # B_det is also probability transition matrix
+        constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1, ]
+        for k in range(C_det.shape[2]):
+            for j in range(nb):
+                b_one_hot = np.zeros(nb)
+                b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
-                # B_det is also part of permutation matrix
-                constraints += [cp.matmul(np.ones((1, nz)), D) == cp.matmul(np.ones((1, nz)), Q_det[k]), ]
+                for l in range(j + 1, nb):
+                    z.append((cp.Variable(boolean=True)))
+                    constraints += [Q_det[k][:, j] - Q_det[k][:, l] <= 1 - z[-1],
+                                    D[:, j] - D[:, l] <= 1 - z[-1],
+                                    D[:, j] - D[:, l] >= z[-1] - 1]
+
+            constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
+                            sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
 
     objective = cp.Minimize(loss)
     problem = cp.Problem(objective, constraints)
@@ -270,9 +302,9 @@ def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
         B_det_out = []
         for i in range(len(B_det)):
             B_det_out.append(B_det[i].value)
-        return np.array(B_det_out), B, D.value, r_bar.value
+        return loss.value, np.array(B_det_out), B, D, r_bar.value
     else:
-        return np.array(B_out), r.value
+        return loss.value, np.array(B_out), D, r.value
 
 
 def value_iteration(B, r, nz, na, epsilon=0.0001, discount_factor=0.95):
@@ -411,30 +443,48 @@ def eval_performance(policy, D, C_det, V, V_b, y_a, na, nb, b, D_, P_xu, B_det=N
 
 
 def save_reduction_graph(Q, D, r_bar, nz, Q_det=None):
-    np.save("reduction_graph/Q_{}".format(nz), Q)
-    np.save("reduction_graph/D_{}".format(nz), D)
-    np.save("reduction_graph/r_fit_{}".format(nz), r_bar)
+    folder_name = "reduction_graph/"
     if Q_det is not None:
-        np.save("reduction_graph/Q_det_{}".format(nz), Q_det)
+        folder_name += "det/"
+        np.save(folder_name + "Q_{}".format(nz), Q)
+        np.save(folder_name + "D_{}".format(nz), D)
+        np.save(folder_name + "r_fit_{}".format(nz), r_bar)
+        np.save(folder_name + "Q_det_{}".format(nz), Q_det)
+    else:
+        np.save(folder_name + "Q_{}".format(nz), Q)
+        np.save(folder_name + "D_{}".format(nz), D)
+        np.save(folder_name + "r_fit_{}".format(nz), r_bar)
 
 
 def save_B_r(B, D, r, nz, B_det=None):
-    np.save("reduction_graph/B_{}".format(nz), B)
-    np.save("reduction_graph/D_wB_{}".format(nz), D)
-    np.save("reduction_graph/r_{}".format(nz), r)
+    folder_name = "reduction_graph/"
     if B_det is not None:
-        np.save("reduction_graph/Q_det_{}".format(nz), B_det)
+        folder_name += "det/"
+        np.save(folder_name + "B_{}".format(nz), B)
+        np.save(folder_name + "D_wB_{}".format(nz), D)
+        np.save(folder_name + "r_{}".format(nz), r)
+        np.save(folder_name + "B_det_{}".format(nz), B_det)
+    else:
+        np.save(folder_name + "B_{}".format(nz), B)
+        np.save(folder_name + "D_wB_{}".format(nz), D)
+        np.save(folder_name + "r_{}".format(nz), r)
 
 
 def load_reduction_graph(nz, det=False):
-    Q = np.load("reduction_graph/Q_{}.npy".format(nz))
-    D = np.load("reduction_graph/D_{}.npy".format(nz))
-    r_bar = np.load("reduction_graph/r_fit_{}.npy".format(nz))
+    folder_name = "reduction_graph/"
     if det:
-        Q_det = np.load("reduction_graph/Q_det{}.npy".format(nz))
+        folder_name += "det/"
+        Q = np.load(folder_name + "Q_{}.npy".format(nz))
+        D = np.load(folder_name + "D_{}.npy".format(nz))
+        r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
+        Q_det = np.load(folder_name + "Q_det{}.npy".format(nz))
         return Q_det, Q, D, r_bar
     else:
+        Q = np.load(folder_name + "Q_{}.npy".format(nz))
+        D = np.load(folder_name + "D_{}.npy".format(nz))
+        r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
         return Q, D, r_bar
+
 
 def load_underlying_dynamics():
     D_ = np.load("reduction_graph/D_.npy")
@@ -459,19 +509,19 @@ if __name__ == "__main__":
     if args.load_graph:
         Q, D, r_bar = load_reduction_graph(nz)
     else:
-        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
-        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
-        r = r.T
+        # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
+        # r = r.T
         if args.save_graph:
-            # save_reduction_graph(Q, D, r_bar, nz)
-            save_B_r(B, D, r, nz)
+            save_reduction_graph(Q, D, r_bar, nz)
+            # save_B_r(B, D, r, nz)
 
 
-    # B = Q@D.T@np.linalg.inv(D@D.T)
-    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    B = Q@D.T@np.linalg.inv(D@D.T)
+    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()

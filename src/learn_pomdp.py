@@ -133,7 +133,7 @@ def baum_welch(y, a, O, A, B, initial_distribution, ny, na, nz, nO, Ot, n_iter=1
     for n in range(n_iter):
         print('Iteration: ', n)
         if n%10 == 0 and args.save_graph:
-            save_graph(A, B, initial_distribution, Ot, nz, seed)
+            lg.save_graph(A, B, initial_distribution, Ot, nz, seed, args)
         A_num = np.zeros((nz, na, nz))
         A_den = np.zeros((nz, na))
         if pred_O:
@@ -378,6 +378,8 @@ if __name__ == "__main__":
     bc = batch_creator(args, env, None, True)
     nz = 20
     na = 4
+    ny = 7
+    nO = 7
     action_dict = {0: "N", 1: "S", 2: "E", 3: "W"}
     epsilon = 1e-8
 
@@ -398,7 +400,8 @@ if __name__ == "__main__":
     if args.minimize:
         partition = minimize(A, B, Ot, nz, na, epsilon=1e-5)
         Ar, Br, initial_distribution_r, nzr = reduce_A_B(A, B, initial_distribution, partition)
-        Ar, Br, initial_distribution = baum_welch(y, a, O, Ar, Br, initial_distribution, ny, na, nzr, nO, Ot,
+        print("nzr ", nzr)
+        Ar, Br, initial_distribution = baum_welch(y, a, O, Ar, Br, initial_distribution_r, ny, na, nzr, nO, Ot,
                                                   50, epsilon)
     plot_A(A, na)
     plot_B(B)

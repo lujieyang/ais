@@ -33,6 +33,7 @@ parser.add_argument("--save_graph", help="Save the parameters learned for the gr
 parser.add_argument("--short_traj", help="Collect samples for short trajectory(not until reaching the goal)",action="store_true")
 parser.add_argument("--minimize", help="Run model minimization on learned graph",action="store_true")
 parser.add_argument("--env_not_terminate", help="Simulation does not terminate when goal state is reached",action="store_true")
+parser.add_argument("--pomdp", help="Use graphs learned for the pomdp model",action="store_true")
 parser.add_argument("--models_folder", type=str, help='Pretrained model (state dict)',
                     default="results/CheeseMaze-v0_500_50_0.7_0.0001_0.0006_0.003_200_15000_25_KL_1/models/seed42")
 parser.add_argument("--AIS_pred_ncomp", type=int,
