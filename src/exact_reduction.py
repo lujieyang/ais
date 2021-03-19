@@ -68,10 +68,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    D = cp.Variable((nz, nb), boolean=True)
+    # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_value.npy")
-    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    D_value = np.load("reduction_graph/D_wB_11.npy")
+    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -175,22 +175,29 @@ def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None)
     return B, D, r
 
 
-def parallel_convex_opt(nz, nb, nu, C, R, sample_D=False, C_det=None, P_ybu=None):
+def parallel_convex_opt(nz, nb, nu, C, R, sample_D=None, C_det=None, P_ybu=None):
     """
     sample_D: boolean. True:
     """
     pool = mp.Pool(mp.cpu_count())
-    # Ds = []
-    if sample_D:
-        pass
+    Ds = []
+    s = Stirling_Assignments(nb, nz)
+    if sample_D is not None:
+        for D in s.all_partitions_generator_D_rep():
+            Ds.append(D)
+        ind = np.random.choice(len(Ds), sample_D, replace=False)
+        for i in ind:
+            D = Ds[i]
+            pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
     else:
-        s = Stirling_Assignments(nb, nz)
         for D in s.all_partitions_generator_D_rep():
             pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
     # parallel_results = [pool.apply(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu)) for D in Ds]
     pool.close()
     pool.join()
     ind = np.argmin(np.array(parallel_loss))
+    np.save("reduction_graph/parallel_loss_{}".format(nz), parallel_loss)
+    np.save("reduction_graph/parallel_matrices_{}".format(nz), parallel_matrices)
     # loss = [result[0] for result in parallel_results]
     # ind = np.argmin(np.array(loss))
     # return parallel_results[ind][1:]
@@ -293,7 +300,8 @@ def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
     if not (problem.status == cp.OPTIMAL):
         print("unsuccessful...")
     else:
-        print("loss ", loss.value)
+        # print("loss ", loss.value)
+        pass
 
     B_out = []
     for i in range(len(B)):
@@ -486,6 +494,22 @@ def load_reduction_graph(nz, det=False):
         return Q, D, r_bar
 
 
+def load_B_r(nz, det=False):
+    folder_name = "reduction_graph/"
+    if det:
+        folder_name += "det/"
+        B = np.load(folder_name + "B_{}.npy".format(nz))
+        D = np.load(folder_name + "D_wB_{}.npy".format(nz))
+        r = np.load(folder_name + "r_{}.npy".format(nz))
+        B_det = np.load(folder_name + "B_det{}.npy".format(nz))
+        return B_det, B, D, r
+    else:
+        B = np.load(folder_name + "B_{}.npy".format(nz))
+        D = np.load(folder_name + "D_wB_{}.npy".format(nz))
+        r = np.load(folder_name + "r_{}.npy".format(nz))
+        return B, D, r
+
+
 def load_underlying_dynamics():
     D_ = np.load("reduction_graph/D_.npy")
     P_xu = np.load("reduction_graph/P_xu.npy")
@@ -508,20 +532,21 @@ if __name__ == "__main__":
 
     if args.load_graph:
         Q, D, r_bar = load_reduction_graph(nz)
+        # B, D, r = load_B_r(nz)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
+        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
-        # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
+        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz)
-            # save_B_r(B, D, r, nz)
+            # save_reduction_graph(Q, D, r_bar, nz)
+            save_B_r(B, D, r, nz)
 
 
-    B = Q@D.T@np.linalg.inv(D@D.T)
-    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    # B = Q@D.T@np.linalg.inv(D@D.T)
+    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
