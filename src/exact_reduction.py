@@ -60,10 +60,11 @@ def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
 
 def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     A_in = np.array([[1, -1, 0],
-                     [-1, -1, 0],
-                     [-1, 1, 2],
-                     [1, 1, -2]])
-    y_in = np.array([0, 0, 2, 0]).reshape(-1, 1)
+                     [0, 1, 0],
+                     [-1, -1, 0]])
+    y_in = np.array([0, 1, 0]).reshape(-1, 1)
+    A_e = np.array([-0.5, 1.5, -1])
+    y_e = 0
     Q1 = cp.Variable((nz, nb), nonneg=True)
     Q2 = cp.Variable((nz, nb), nonneg=True)
     Q3 = cp.Variable((nz, nb), nonneg=True)
@@ -75,7 +76,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     Q = [Q1, Q2, Q3, Q4]
     D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/sample/D_wB_11.npy")
+    # D_value = np.load("reduction_graph/D_wB_11.npy")
     # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
@@ -89,12 +90,24 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
 
-    t = cp.Variable((nz, int(nb*(nb-1)/2)), boolean=True)
-    x = cp.Variable((nz, int(nb*(nb-1)/2)), nonneg=True)
+    t = cp.Variable((nz, int(nb*(nb-1)/2)), integer=True)
+    x = cp.Variable((nz, int(nb*(nb-1)/2)), integer=True)
+    constraints += [t >= 0,
+                    t <= 2,
+                    x >= 0, ]
+    constraints += [cp.sum(t) <= ((nb*(nb-1))/2 - (nb - nz)) * 3,
+                    cp.sum(t) >= ((nb*(nb-1))/2 - (nb - nz + 1) * (nb - nz) / 2) * 3]
     for j in range(nb):
+        jls = []
         for l in range(j+1, nb):
+            jl = jl_to_flat(j, l)
+            jls.append(jl)
+            constraints += [sum(t[:, jl]) <= 3]
             for k in range(nz):
-                constraints += [A_in @ cp.vstack((D[k, j] - D[k, l], x[k, jl_to_flat(j, l)], t[k, jl_to_flat(j, l)])) <= y_in, ]
+                constraints += [A_in @ cp.vstack((D[k, j] - D[k, l], x[k, jl], t[k, jl])) <= y_in,
+                                A_e @ cp.vstack((D[k, j] - D[k, l], x[k, jl], t[k, jl])) == y_e]
+        if nz-j-1 >= 0:
+            constraints += [cp.sum(t[:, jls]) >= (nz -j -1) * 3, ]
 
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
@@ -120,13 +133,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
                 for l in range(j + 1, nb):
-                    z.append((cp.Variable(boolean=True)))
-                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] >= z[-1] - 1]
-
-        constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
-                    sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
+                    pass
 
 
     if C_det is not None:
@@ -138,19 +145,13 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
                 for l in range(j + 1, nb):
-                    z.append((cp.Variable(boolean=True)))
-                    constraints += [Q_det[k][:, j] - Q_det[k][:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] >= z[-1] - 1]
-
-            constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
-                            sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
+                    pass
 
     objective = cp.Minimize(loss)
     problem = cp.Problem(objective, constraints)
 
     # solve problem
-    problem.solve(solver=cp.GUROBI, verbose=True)
+    problem.solve(solver=cp.GUROBI, verbose=False)
 
     if not (problem.status == cp.OPTIMAL):
         print("unsuccessful...")
@@ -163,7 +164,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             Q_det_out.append(Q_det[i].value)
         return np.array(Q_det_out), np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
     else:
-        return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
+        return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value, t.value, x.value
 
 
 def jl_to_flat(j, l):
@@ -554,7 +555,7 @@ if __name__ == "__main__":
         # Q, D, r_bar = load_reduction_graph(nz)
         B, D, r = load_B_r(nz)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar, t, x = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
