@@ -68,10 +68,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    # D = cp.Variable((nz, nb), boolean=True)
+    D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    D_value = np.load("reduction_graph/D_11.npy")
-    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    # D_value = np.load("reduction_graph/D_wB_11.npy")
+    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -83,6 +83,8 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     constraints += [cp.sum(D) == nb,
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
+    # Eliminating similarity transform of D
+
     z = []
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
@@ -100,7 +102,8 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 z.append((cp.Variable(boolean=True)))
                 constraints += [Q[i][:, j] - Q[i][:, l] <= 1-z[-1],
                                 D[:, j] - D[:, l] <= 1-z[-1],
-                                D[:, j] - D[:, l] >= z[-1]-1]
+                                D[:, j] - D[:, l] >= z[-1]-1,
+                                D[:, j] + D[:, l] <= z[-1]+1,]
 
         constraints += [sum(z[-int(nb*(nb-1)/2):]) >= nb-nz, sum(z[-int(nb*(nb-1)/2):]) <= (nb-nz+1)*(nb-nz)/2]
 
@@ -143,7 +146,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     problem = cp.Problem(objective, constraints)
 
     # solve problem
-    problem.solve(solver=cp.GUROBI, verbose=False)
+    problem.solve(solver=cp.GUROBI, verbose=True)
 
     if not (problem.status == cp.OPTIMAL):
         print("unsuccessful...")
@@ -544,19 +547,19 @@ if __name__ == "__main__":
         # Q, D, r_bar = load_reduction_graph(nz)
         B, D, r = load_B_r(nz)
     else:
-        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
-        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
+        # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            # save_reduction_graph(Q, D, r_bar, nz)
-            save_B_r(B, D, r, nz)
+            save_reduction_graph(Q, D, r_bar, nz)
+            # save_B_r(B, D, r, nz)
 
 
-    # B = Q@D.T@np.linalg.inv(D@D.T)
-    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    B = Q@D.T@np.linalg.inv(D@D.T)
+    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
