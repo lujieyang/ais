@@ -59,6 +59,11 @@ def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 print("Objective: ", obj.getValue())
 
 def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+    A_in = np.array([[1, -1, 0],
+                     [-1, -1, 0],
+                     [-1, 1, 2],
+                     [1, 1, -2]])
+    y_in = np.array([0, 0, 2, 0]).reshape(-1, 1)
     Q1 = cp.Variable((nz, nb), nonneg=True)
     Q2 = cp.Variable((nz, nb), nonneg=True)
     Q3 = cp.Variable((nz, nb), nonneg=True)
@@ -68,10 +73,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    # D = cp.Variable((nz, nb), boolean=True)
+    D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    D_value = np.load("reduction_graph/D_11.npy")
-    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    # D_value = np.load("reduction_graph/D_11.npy")
+    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -83,7 +88,8 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     constraints += [cp.sum(D) == nb,
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
-    z = []
+    t = []
+    x = []
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
         if P_ybu is not None:
@@ -97,12 +103,11 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
 
             for l in range(j+1, nb):
-                z.append((cp.Variable(boolean=True)))
-                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-z[-1],
-                                D[:, j] - D[:, l] <= 1-z[-1],
-                                D[:, j] - D[:, l] >= z[-1]-1]
-
-        constraints += [sum(z[-int(nb*(nb-1)/2):]) >= nb-nz, sum(z[-int(nb*(nb-1)/2):]) <= (nb-nz+1)*(nb-nz)/2]
+                for k in range(nz):
+                    t.append(cp.Variable(boolean=True))
+                    x.append(cp.Variable(nonneg=True))
+                    constraints += [A_in @ cp.vstack((D[k, j]-D[k, l], x[-1], t[-1])) <= y_in, ]
+                constraints += [Q[i][:, j] - Q[i][:, l] <= sum(x[-nz:]), ]
 
     # Match observation prediction
     if P_ybu is not None:
@@ -544,19 +549,19 @@ if __name__ == "__main__":
         # Q, D, r_bar = load_reduction_graph(nz)
         B, D, r = load_B_r(nz)
     else:
-        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
-        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
+        # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            # save_reduction_graph(Q, D, r_bar, nz)
-            save_B_r(B, D, r, nz)
+            save_reduction_graph(Q, D, r_bar, nz)
+            # save_B_r(B, D, r, nz)
 
 
-    # B = Q@D.T@np.linalg.inv(D@D.T)
-    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    B = Q@D.T@np.linalg.inv(D@D.T)
+    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
