@@ -75,7 +75,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     Q = [Q1, Q2, Q3, Q4]
     D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_11.npy")
+    # D_value = np.load("reduction_graph/sample/D_wB_11.npy")
     # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
@@ -88,8 +88,14 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     constraints += [cp.sum(D) == nb,
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
-    t = []
-    x = []
+
+    t = cp.Variable((nz, int(nb*(nb-1)/2)), boolean=True)
+    x = cp.Variable((nz, int(nb*(nb-1)/2)), nonneg=True)
+    for j in range(nb):
+        for l in range(j+1, nb):
+            for k in range(nz):
+                constraints += [A_in @ cp.vstack((D[k, j] - D[k, l], x[k, jl_to_flat(j, l)], t[k, jl_to_flat(j, l)])) <= y_in, ]
+
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
         if P_ybu is not None:
@@ -103,11 +109,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
 
             for l in range(j+1, nb):
-                for k in range(nz):
-                    t.append(cp.Variable(boolean=True))
-                    x.append(cp.Variable(nonneg=True))
-                    constraints += [A_in @ cp.vstack((D[k, j]-D[k, l], x[-1], t[-1])) <= y_in, ]
-                constraints += [Q[i][:, j] - Q[i][:, l] <= sum(x[-nz:]), ]
+                constraints += [Q[i][:, j] - Q[i][:, l] <= sum(x[:, jl_to_flat(j, l)]), ]
 
     # Match observation prediction
     if P_ybu is not None:
@@ -148,7 +150,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     problem = cp.Problem(objective, constraints)
 
     # solve problem
-    problem.solve(solver=cp.GUROBI, verbose=False)
+    problem.solve(solver=cp.GUROBI, verbose=True)
 
     if not (problem.status == cp.OPTIMAL):
         print("unsuccessful...")
@@ -163,6 +165,9 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     else:
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
+
+def jl_to_flat(j, l):
+    return int((29-j)*j/2+l-(j+1))
 
 def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None):
     B = np.random.random((nz, nz, nu))
