@@ -74,10 +74,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    D = cp.Variable((nz, nb), boolean=True)
+    # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_wB_11.npy")
-    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    D_value = np.load("reduction_graph/D_wB_11.npy")
+    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -91,10 +91,9 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
 
     t = cp.Variable((nz, int(nb*(nb-1)/2)), integer=True)
-    x = cp.Variable((nz, int(nb*(nb-1)/2)), integer=True)
+    x = cp.Variable((nz, int(nb*(nb-1)/2)), boolean=True)
     constraints += [t >= 0,
-                    t <= 2,
-                    x >= 0, ]
+                    t <= 2, ]
     constraints += [cp.sum(t) <= ((nb*(nb-1))/2 - (nb - nz)) * 3,
                     cp.sum(t) >= ((nb*(nb-1))/2 - (nb - nz + 1) * (nb - nz) / 2) * 3]
     for j in range(nb):
@@ -102,7 +101,8 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for l in range(j+1, nb):
             jl = jl_to_flat(j, l)
             jls.append(jl)
-            constraints += [sum(t[:, jl]) <= 3]
+            constraints += [sum(t[:, jl]) <= 3,
+                            cp.sum(x[:, jl]) <= 2, ]
             for k in range(nz):
                 constraints += [A_in @ cp.vstack((D[k, j] - D[k, l], x[k, jl], t[k, jl])) <= y_in,
                                 A_e @ cp.vstack((D[k, j] - D[k, l], x[k, jl], t[k, jl])) == y_e]
