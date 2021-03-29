@@ -68,10 +68,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    D = cp.Variable((nz, nb), boolean=True)
+    # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_wB_11.npy")
-    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    D_value = np.load("reduction_graph/D_wB_11.npy")
+    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -84,7 +84,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
     # Eliminating similarity transform of D
-
+    for i in range(nz):
+        for j in range(nb):
+            for i_ in range(i):
+                constraints += [D[i, j] <= 1 - D[i_, j]]
     z = []
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
@@ -103,7 +106,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 constraints += [Q[i][:, j] - Q[i][:, l] <= 1-z[-1],
                                 D[:, j] - D[:, l] <= 1-z[-1],
                                 D[:, j] - D[:, l] >= z[-1]-1,
-                                D[:, j] + D[:, l] <= z[-1]+1,]
+                                D[:, j] + D[:, l] <= z[-1]+1, ]
 
         constraints += [sum(z[-int(nb*(nb-1)/2):]) >= nb-nz, sum(z[-int(nb*(nb-1)/2):]) <= (nb-nz+1)*(nb-nz)/2]
 
