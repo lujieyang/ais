@@ -73,10 +73,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    # D = cp.Variable((nz, nb), boolean=True)
+    D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    D_value = np.load("reduction_graph/sample/D_wB_11.npy")
-    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    # D_value = np.load("reduction_graph/D_wB_11.npy")
+    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -567,21 +567,21 @@ if __name__ == "__main__":
         # Q, D, r_bar = load_reduction_graph(nz)
         B, D, r = load_B_r(nz)
     else:
-        D = closed_form(nz, nb)
-        _, B, _, r = solve_B_r(nz, nb, nu, C, R, D)
-        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        # D = closed_form(nz, nb)
+        # _, B, _, r = solve_B_r(nz, nb, nu, C, R, D)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            # save_reduction_graph(Q, D, r_bar, nz)
-            save_B_r(B, D, r, nz)
+            save_reduction_graph(Q, D, r_bar, nz)
+            # save_B_r(B, D, r, nz)
 
 
-    # B = Q@D.T@np.linalg.inv(D@D.T)
-    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    B = Q@D.T@np.linalg.inv(D@D.T)
+    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
