@@ -68,10 +68,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    # D = cp.Variable((nz, nb), boolean=True)
+    D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    D_value = np.load("reduction_graph/D_wB_11.npy")
-    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    # D_value = np.load("reduction_graph/D_wB_11.npy")
+    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -84,11 +84,25 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                     cp.matmul(np.ones((1, nz)), D) == 1,
                     cp.matmul(D, np.ones((nb, 1))) >= 1, ]
     # Eliminating similarity transform of D
-    for i in range(nz):
-        for j in range(nb):
-            for i_ in range(i):
-                constraints += [D[i, j] <= 1 - D[i_, j]]
-    z = []
+    for i in range(1, nz):
+        for j in range(i):
+            constraints += [D[i, j] == 0, ]
+    # for i in range(nz):
+    #     for j in range(nb):
+    #         for i_ in range(i):
+    #             constraints += [D[i, j] <= 1 - D[i_, j]]
+
+    # Eq 13, 14 enforced on columns of D
+    t = cp.Variable(int(nb * (nb - 1) / 2), boolean=True)
+    for j in range(nb):
+        for l in range(j + 1, nb):
+            jl = jl_to_flat(j, l)
+            constraints += [D[:, j] - D[:, l] <= 1 - t[jl],
+                            D[:, j] - D[:, l] >= t[jl] - 1,
+                            D[:, j] + D[:, l] <= t[jl] + 1, ]
+    constraints += [sum(t) >= nb - nz,
+                    sum(t) <= (nb - nz + 1) * (nb - nz) / 2]
+
     for i in range(nu):
         constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
         if P_ybu is not None:
@@ -102,13 +116,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
 
             for l in range(j+1, nb):
-                z.append((cp.Variable(boolean=True)))
-                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-z[-1],
-                                D[:, j] - D[:, l] <= 1-z[-1],
-                                D[:, j] - D[:, l] >= z[-1]-1,
-                                D[:, j] + D[:, l] <= z[-1]+1, ]
-
-        constraints += [sum(z[-int(nb*(nb-1)/2):]) >= nb-nz, sum(z[-int(nb*(nb-1)/2):]) <= (nb-nz+1)*(nb-nz)/2]
+                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-t[jl_to_flat(j, l)], ]
 
     # Match observation prediction
     if P_ybu is not None:
@@ -163,6 +171,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array(Q_det_out), np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
     else:
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
+
+
+def jl_to_flat(j, l):
+    return int((nb*2-1-j)*j/2+l-(j+1))
 
 
 def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None):
@@ -547,8 +559,8 @@ if __name__ == "__main__":
     parallel_matrices = []
 
     if args.load_graph:
-        # Q, D, r_bar = load_reduction_graph(nz)
-        B, D, r = load_B_r(nz)
+        Q, D, r_bar = load_reduction_graph(nz)
+        # B, D, r = load_B_r(nz)
     else:
         Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
