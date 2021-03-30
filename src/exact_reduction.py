@@ -462,18 +462,29 @@ def eval_performance(policy, D, C_det, V, V_b, y_a, na, nb, b, D_, P_xu, B_det=N
     return average_return, V_mse
 
 
-def save_reduction_graph(Q, D, r_bar, nz, Q_det=None):
+def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False):
     folder_name = "reduction_graph/"
     if Q_det is not None:
         folder_name += "det/"
-        np.save(folder_name + "Q_{}".format(nz), Q)
-        np.save(folder_name + "D_{}".format(nz), D)
-        np.save(folder_name + "r_fit_{}".format(nz), r_bar)
-        np.save(folder_name + "Q_det_{}".format(nz), Q_det)
+        if output_pred:
+            np.save(folder_name + "Q_{}_y".format(nz), Q)
+            np.save(folder_name + "D_{}_y".format(nz), D)
+            np.save(folder_name + "r_fit_{}_y".format(nz), r_bar)
+            np.save(folder_name + "Q_det_{}_y".format(nz), Q_det)
+        else:
+            np.save(folder_name + "Q_{}".format(nz), Q)
+            np.save(folder_name + "D_{}".format(nz), D)
+            np.save(folder_name + "r_fit_{}".format(nz), r_bar)
+            np.save(folder_name + "Q_det_{}".format(nz), Q_det)
     else:
-        np.save(folder_name + "Q_{}".format(nz), Q)
-        np.save(folder_name + "D_{}".format(nz), D)
-        np.save(folder_name + "r_fit_{}".format(nz), r_bar)
+        if output_pred:
+            np.save(folder_name + "Q_{}_y".format(nz), Q)
+            np.save(folder_name + "D_{}_y".format(nz), D)
+            np.save(folder_name + "r_fit_{}_y".format(nz), r_bar)
+        else:
+            np.save(folder_name + "Q_{}".format(nz), Q)
+            np.save(folder_name + "D_{}".format(nz), D)
+            np.save(folder_name + "r_fit_{}".format(nz), r_bar)
 
 
 def save_B_r(B, D, r, nz, B_det=None, sample=False):
@@ -557,7 +568,7 @@ if __name__ == "__main__":
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz)
+            save_reduction_graph(Q, D, r_bar, nz, output_pred=True)
             # save_B_r(B, D, r, nz)
 
 
