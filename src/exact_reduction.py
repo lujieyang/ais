@@ -127,13 +127,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
                 for l in range(j + 1, nb):
-                    z.append((cp.Variable(boolean=True)))
-                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] >= z[-1] - 1]
-
-        constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
-                    sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
+                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - t[jl_to_flat(j, l)], ]
 
 
     if C_det is not None:
@@ -145,13 +139,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
                 for l in range(j + 1, nb):
-                    z.append((cp.Variable(boolean=True)))
-                    constraints += [Q_det[k][:, j] - Q_det[k][:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] <= 1 - z[-1],
-                                    D[:, j] - D[:, l] >= z[-1] - 1]
-
-            constraints += [sum(z[-int(nb * (nb - 1) / 2):]) >= nb - nz,
-                            sum(z[-int(nb * (nb - 1) / 2):]) <= (nb - nz + 1) * (nb - nz) / 2]
+                    constraints += [Q_det[k][:, j] - Q_det[k][:, l] <= 1 - t[jl_to_flat(j, l)], ]
 
     objective = cp.Minimize(loss)
     problem = cp.Problem(objective, constraints)
@@ -560,9 +548,9 @@ if __name__ == "__main__":
 
     if args.load_graph:
         Q, D, r_bar = load_reduction_graph(nz)
-        # B, D, r = load_B_r(nz)
+        # B, D, r = load_B_r(nz, sample=True)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
