@@ -1,4 +1,5 @@
 import numpy as np
+import numpy.matlib as matlib
 import argparse
 import cvxpy as cp
 import learn_graph as lg
@@ -68,10 +69,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    D = cp.Variable((nz, nb), boolean=True)
+    # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_wB_11.npy")
-    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    D_value = np.load("reduction_graph/stirling/D_wB_11.npy")
+    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -87,10 +88,13 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     for i in range(1, nz):
         for j in range(i):
             constraints += [D[i, j] == 0, ]
-    # for i in range(nz):
-    #     for j in range(nb):
-    #         for i_ in range(i):
-    #             constraints += [D[i, j] <= 1 - D[i_, j]]
+    # D in row echelon form
+    f = np.zeros(nb)
+    for i in range(nz-1):
+        f[i] = 1
+        W = generate_W(i, nz)
+        print(((W@D_value@f) >= -1e-8).all())
+        constraints += [W@D@f >= -1e-8, ]
 
     # Eq 13, 14 enforced on columns of D
     t = cp.Variable(int(nb * (nb - 1) / 2), boolean=True)
@@ -159,6 +163,15 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array(Q_det_out), np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
     else:
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
+
+
+def generate_W(i, nz):
+    nr = nz-i-1
+    Rblock = matlib.repmat(-np.eye(nr), i+1, 1)
+    Lblock = np.zeros(((i+1)*(nz-i-1), i+1))
+    for l in range(i+1):
+        Lblock[l*nr:(l+1)*nr, l] = 1
+    return np.hstack((Lblock, Rblock))
 
 
 def jl_to_flat(j, l):
