@@ -68,10 +68,10 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         for k in range(C_det.shape[2]):
             Q_det.append(cp.Variable((nz, nb), boolean=True))
     Q = [Q1, Q2, Q3, Q4]
-    D = cp.Variable((nz, nb), boolean=True)
+    # D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
-    # D_value = np.load("reduction_graph/D_wB_11.npy")
-    # D = cp.Parameter((nz, nb), boolean=True, value=D_value)
+    D_value = np.load("reduction_graph/D_wB_11.npy")
+    D = cp.Parameter((nz, nb), boolean=True, value=D_value)
     r_bar = cp.Variable((nb, nu))
     if P_ybu is not None:
         P_ybu_bar = []
@@ -163,6 +163,78 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
 
 def jl_to_flat(j, l):
     return int((nb*2-1-j)*j/2+l-(j+1))
+
+
+def convex_relaxation(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+    Q1 = cp.Variable((nz, nb), nonneg=True)
+    Q2 = cp.Variable((nz, nb), nonneg=True)
+    Q3 = cp.Variable((nz, nb), nonneg=True)
+    Q4 = cp.Variable((nz, nb), nonneg=True)
+    if C_det is not None:
+        Q_det = []
+        for k in range(C_det.shape[2]):
+            Q_det.append(cp.Variable((nz, nb), boolean=True))
+    Q = [Q1, Q2, Q3, Q4]
+    D = cp.Variable((nz, nb), nonneg=True)
+    # Manually initialize the projection matrix
+    r_bar = cp.Variable((nb, nu))
+    if P_ybu is not None:
+        P_ybu_bar = []
+        ny = P_ybu.shape[0]
+        for i in range(nu):
+            P_ybu_bar.append(cp.Variable((ny, nb), nonneg=True))
+    loss = 0
+    constraints = []
+    constraints += [cp.matmul(np.ones((1, nz)), D) == 1, ]
+
+    for i in range(nu):
+        constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
+        if P_ybu is not None:
+            constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
+        for j in range(nb):
+            b_one_hot = np.zeros(nb)
+            b_one_hot[j] = 1
+            # Match transition distributions
+            loss += cp.norm(cp.matmul(Q[i], b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
+            # Match reward
+            loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
+
+    # Match observation prediction
+    if P_ybu is not None:
+        for i in range(nu):
+            constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
+            for j in range(nb):
+                b_one_hot = np.zeros(nb)
+                b_one_hot[j] = 1
+                loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
+
+    if C_det is not None:
+        # B_det is also probability transition matrix
+        constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1, ]
+        for k in range(C_det.shape[2]):
+            for j in range(nb):
+                b_one_hot = np.zeros(nb)
+                b_one_hot[j] = 1
+                loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
+
+    objective = cp.Minimize(loss)
+    problem = cp.Problem(objective, constraints)
+
+    # solve problem
+    problem.solve(solver=cp.GUROBI, verbose=True)
+
+    if not (problem.status == cp.OPTIMAL):
+        print("unsuccessful...")
+    else:
+        print("loss ", loss.value)
+
+    if C_det is not None:
+        Q_det_out = []
+        for i in range(len(Q_det)):
+            Q_det_out.append(Q_det[i].value)
+        return np.array(Q_det_out), np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
+    else:
+        return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
 def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None):
@@ -462,8 +534,10 @@ def eval_performance(policy, D, C_det, V, V_b, y_a, na, nb, b, D_, P_xu, B_det=N
     return average_return, V_mse
 
 
-def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False):
+def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False, conv_rel=False):
     folder_name = "reduction_graph/"
+    if conv_rel:
+        folder_name += "conv_rel/"
     if Q_det is not None:
         folder_name += "det/"
         if output_pred:
@@ -561,14 +635,15 @@ if __name__ == "__main__":
         Q, D, r_bar = load_reduction_graph(nz)
         # B, D, r = load_B_r(nz, sample=True)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
+        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        Q, D, r_bar = convex_relaxation(nz, nb, nu, C, R) #, P_ybu=P_ybu, C_det=C_det)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz, output_pred=True)
+            save_reduction_graph(Q, D, r_bar, nz)
             # save_B_r(B, D, r, nz)
 
 
