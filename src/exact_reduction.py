@@ -237,6 +237,26 @@ def convex_relaxation(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
+def convex_relaxation_sample(nz, nb, nu, C, R, n_sample=5000):
+    """
+    sample_D: boolean. True:
+    """
+    pool = mp.Pool(mp.cpu_count())
+    for i in range(n_sample):
+        D = np.random.random((nz, nb))
+        D = D / np.sum(D, axis=0)
+        pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
+
+    pool.close()
+    pool.join()
+    ind = np.argmin(np.array(parallel_loss))
+
+    np.save("reduction_graph/conv_rel/parallel_loss_{}".format(nz), parallel_loss)
+    np.save("reduction_graph/conv_rel/parallel_matrices_{}".format(nz), parallel_matrices)
+
+    return parallel_matrices[ind]
+
+
 def bilinear_alternation(nz, nb, nu, C, R, epsilon=1e-5, C_det=None, P_ybu=None):
     B = np.random.random((nz, nz, nu))
     B = B/np.sum(B, axis=0)
@@ -337,7 +357,7 @@ def solve_D(nz, nb, nu, C, R, B, r, C_det=None, P_ybu=None, B_det=None, P_yzu=No
 def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
     assert(np.sum(D) == nb)
     assert((np.ones((1, nz))@D == 1).all())
-    assert((D@np.ones((nb, 1)) >= 1).all())
+    # assert((D@np.ones((nb, 1)) >= 1).all())
     B = []
     for i in range(nu):
         B.append(cp.Variable((nz, nz), nonneg=True))
@@ -561,8 +581,10 @@ def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False, conv_re
             np.save(folder_name + "r_fit_{}".format(nz), r_bar)
 
 
-def save_B_r(B, D, r, nz, B_det=None, sample=False):
+def save_B_r(B, D, r, nz, B_det=None, sample=False, conv_rel=False):
     folder_name = "reduction_graph/"
+    if conv_rel:
+        folder_name += "conv_rel/"
     if sample:
         folder_name += "sample/"
     if B_det is not None:
@@ -636,19 +658,19 @@ if __name__ == "__main__":
         # B, D, r = load_B_r(nz, sample=True)
     else:
         # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
-        Q, D, r_bar = convex_relaxation(nz, nb, nu, C, R) #, P_ybu=P_ybu, C_det=C_det)
+        # Q, D, r_bar = convex_relaxation(nz, nb, nu, C, R) #, P_ybu=P_ybu, C_det=C_det)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
-        # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
+        [B, D, r] = convex_relaxation_sample(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
-        # r = r.T
+        r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz)
-            # save_B_r(B, D, r, nz)
+            # save_reduction_graph(Q, D, r_bar, nz)
+            save_B_r(B, D, r, nz, conv_rel=True)
 
 
-    B = Q@D.T@np.linalg.inv(D@D.T)
-    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    # B = Q@D.T@np.linalg.inv(D@D.T)
+    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
