@@ -237,7 +237,7 @@ def convex_relaxation(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
-def convex_relaxation_sample(nz, nb, nu, C, R, n_sample=5000):
+def convex_relaxation_sample(nz, nb, nu, C, R, C_det=None, P_ybu=None, n_sample=5000):
     """
     sample_D: boolean. True:
     """
@@ -245,6 +245,7 @@ def convex_relaxation_sample(nz, nb, nu, C, R, n_sample=5000):
     for i in range(n_sample):
         D = np.random.random((nz, nb))
         D = D / np.sum(D, axis=0)
+        # solve_B_r(nz, nb, nu, C, R, D, C_det, P_ybu)
         pool.apply_async(solve_B_r, args=(nz, nb, nu, C, R, D, C_det, P_ybu), callback=collect_result)
 
     pool.close()
@@ -355,8 +356,8 @@ def solve_D(nz, nb, nu, C, R, B, r, C_det=None, P_ybu=None, B_det=None, P_yzu=No
 
 
 def solve_B_r(nz, nb, nu, C, R, D, C_det=None, P_ybu=None):
-    assert(np.sum(D) == nb)
-    assert((np.ones((1, nz))@D == 1).all())
+    # assert(np.sum(D) == nb)
+    # assert((np.ones((1, nz))@D == 1).all())
     # assert((D@np.ones((nb, 1)) >= 1).all())
     B = []
     for i in range(nu):
