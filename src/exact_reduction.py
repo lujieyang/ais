@@ -104,23 +104,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     constraints += [sum(t) >= nb - nz,
                     sum(t) <= (nb - nz + 1) * (nb - nz) / 2]
 
-    for i in range(nu):
-        constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
-        if P_ybu is not None:
-            constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
-        for j in range(nb):
-            b_one_hot = np.zeros(nb)
-            b_one_hot[j] = 1
-            # Match transition distributions
-            loss += cp.norm(cp.matmul(Q[i], b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
-            # Match reward
-            loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
-
-            for l in range(j+1, nb):
-                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-t[jl_to_flat(j, l)],
-                                r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
-
-    # Match observation prediction
+    # AP2ab
     if P_ybu is not None:
         for i in range(nu):
             constraints += [cp.matmul(np.ones((1, ny)), P_ybu_bar[i]) == 1, ]
@@ -130,11 +114,9 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
                 for l in range(j + 1, nb):
                     constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - t[jl_to_flat(j, l)], ]
+        constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1,
+                        r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
 
-
-    if C_det is not None:
-        # B_det is also probability transition matrix
-        constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1, ]
         for k in range(C_det.shape[2]):
             for j in range(nb):
                 b_one_hot = np.zeros(nb)
@@ -142,6 +124,21 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 loss += cp.norm(cp.matmul(Q_det[k], b_one_hot) - cp.matmul(D, C_det[:, :, k] @ b_one_hot))
                 for l in range(j + 1, nb):
                     constraints += [Q_det[k][:, j] - Q_det[k][:, l] <= 1 - t[jl_to_flat(j, l)], ]
+    else:
+        # AP2
+        for i in range(nu):
+            constraints += [cp.matmul(np.ones((1, nz)), Q[i]) == 1, ]
+            for j in range(nb):
+                b_one_hot = np.zeros(nb)
+                b_one_hot[j] = 1
+                # Match transition distributions
+                loss += cp.norm(cp.matmul(Q[i], b_one_hot)-cp.matmul(D, C[:, :, i]@b_one_hot))
+                # Match reward
+                loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
+
+                for l in range(j+1, nb):
+                    constraints += [Q[i][:, j] - Q[i][:, l] <= 1-t[jl_to_flat(j, l)],
+                                    r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
 
     objective = cp.Minimize(loss)
     problem = cp.Problem(objective, constraints)
@@ -563,14 +560,14 @@ if __name__ == "__main__":
         Q, D, r_bar = load_reduction_graph(nz)
         # B, D, r = load_B_r(nz, sample=True)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
+        # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
-        # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
+        Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det, P_ybu=P_ybu)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz)
+            save_reduction_graph(Q, D, r_bar, nz, Q_det, True)
             # save_B_r(B, D, r, nz)
 
 
