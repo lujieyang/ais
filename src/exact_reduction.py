@@ -67,7 +67,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     if C_det is not None:
         Q_det = []
         for k in range(C_det.shape[2]):
-            Q_det.append(cp.Variable((nz, nb), boolean=True))
+            Q_det.append(cp.Variable((nz, nb), nonneg=True))
     Q = [Q1, Q2, Q3, Q4]
     D = cp.Variable((nz, nb), boolean=True)
     # Manually initialize the projection matrix
@@ -112,12 +112,13 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 b_one_hot = np.zeros(nb)
                 b_one_hot[j] = 1
                 loss += cp.norm(cp.matmul(P_ybu_bar[i], b_one_hot) - P_ybu[:, :, i] @ b_one_hot)
+                loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
                 for l in range(j + 1, nb):
-                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - t[jl_to_flat(j, l)], ]
-        constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1,
-                        r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
+                    constraints += [P_ybu_bar[i][:, j] - P_ybu_bar[i][:, l] <= 1 - t[jl_to_flat(j, l)],
+                                    r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
 
         for k in range(C_det.shape[2]):
+            constraints += [cp.matmul(np.ones((1, nz)), Q_det[k]) == 1, ]
             for j in range(nb):
                 b_one_hot = np.zeros(nb)
                 b_one_hot[j] = 1
