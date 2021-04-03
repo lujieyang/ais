@@ -59,6 +59,7 @@ def runGUROBIImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
                 print("Objective: ", obj.getValue())
 
 def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
+    M = 1e6
     Q1 = cp.Variable((nz, nb), nonneg=True)
     Q2 = cp.Variable((nz, nb), nonneg=True)
     Q3 = cp.Variable((nz, nb), nonneg=True)
@@ -116,7 +117,8 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
             loss += cp.norm(R[j, i] - cp.matmul(r_bar[:, i], b_one_hot))
 
             for l in range(j+1, nb):
-                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-t[jl_to_flat(j, l)], ]
+                constraints += [Q[i][:, j] - Q[i][:, l] <= 1-t[jl_to_flat(j, l)],
+                                r_bar[j, i] - r_bar[l, i] <= (1-t[jl_to_flat(j, l)])*M, ]
 
     # Match observation prediction
     if P_ybu is not None:
@@ -561,14 +563,14 @@ if __name__ == "__main__":
         Q, D, r_bar = load_reduction_graph(nz)
         # B, D, r = load_B_r(nz, sample=True)
     else:
-        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, P_ybu=P_ybu)
+        Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
         # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
         # r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz, output_pred=True)
+            save_reduction_graph(Q, D, r_bar, nz)
             # save_B_r(B, D, r, nz)
 
 
