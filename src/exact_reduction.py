@@ -431,7 +431,6 @@ def value_iteration(B, r, nz, na, epsilon=0.0001, discount_factor=0.95):
     n = 0
     # while not the optimal policy
     while True:
-        print('Iteration: ', n)
         # for stopping condition
         delta = 0
 
@@ -531,7 +530,7 @@ def eval_performance(policy, D, C_det, V, V_b, y_a, na, nb, b, D_, P_xu, B_det=N
     print("Average reward: ", average_return)
     print("V mse: ", V_mse)
     print("Average V mse", V_mse/len(Vs))
-    return average_return, V_mse
+    return average_return, V_mse/len(Vs)
 
 
 def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False):
