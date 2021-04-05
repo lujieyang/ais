@@ -14,6 +14,8 @@ parser = argparse.ArgumentParser(description='This code runs AIS using the Next 
 parser.add_argument("--save_graph", help="Save the transition probabilities", action="store_true")
 parser.add_argument("--load_graph", help="Load the transition probabilities", action="store_true")
 parser.add_argument("--AIS_state_size", type=int, help="Load the transition probabilities", default=11)
+parser.add_argument("--pomdp", help="Use graphs learned for the pomdp model", action="store_true")
+parser.add_argument("--env_not_terminate", help="Simulation does not terminate when goal state is reached",action="store_true")
 args = parser.parse_args()
 
 
@@ -580,7 +582,7 @@ def save_B_r(B, D, r, nz, B_det=None, sample=False):
         np.save(folder_name + "r_{}".format(nz), r)
 
 
-def load_reduction_graph(nz, det=False, output_pred=False):
+def load_reduction_graph(nz, det=False, output_pred=False, AP2ab=False):
     folder_name = "reduction_graph/"
     if AP2ab:
         folder_name += "AP2ab/"

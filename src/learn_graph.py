@@ -428,6 +428,8 @@ def observation_count(y):
 def eval_model(A, B, initial_distribution, y, a, O, Ot):
     num_error = 0
     for r in range(len(y)):
+        if r % 100 == 0:
+            print(r)
         yr = np.array(y[r])
         ar = np.array(a[r])
         Or = O[r]

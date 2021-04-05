@@ -1,12 +1,13 @@
 import numpy as np
 import learn_graph as lg
 import argparse
-import random
+import exact_reduction
+
 
 parser = argparse.ArgumentParser(description='This code runs AIS using the Next Observation prediction version')
 parser.add_argument("--short_traj", help="Collect samples for short trajectory(not until reaching the goal)",action="store_true")
 parser.add_argument("--env_not_terminate", help="Simulation does not terminate when goal state is reached",action="store_true")
-parser.add_argument("--pomdp", help="Use graphs learned for the pomdp model",action="store_true")
+parser.add_argument("--pomdp", help="Use graphs learned for the pomdp model", action="store_true")
 args = parser.parse_args()
 args.load_policy = False
 
@@ -82,11 +83,25 @@ def value_iteration(A, B, nz, na, Ot, epsilon=0.0001, discount_factor=0.95):
     return policy, V
 
 
-def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
+def eval_performance(policy, A, V, V_b, nb, D_, P_xu, C_det, y_a, n_episodes=100, epsilon=1e-8, beta=0.95):
     returns = []
+    Vs = []
+    V_bs = []
     for n_eps in range(n_episodes):
         reward_episode = []
         y = lg.env.reset()
+
+        uniform_distribution = np.ones(nb) / nb
+        bn = np.ones(11) / 11
+        while True:
+            # sample b from initial distribution
+            ind_b = np.where(np.random.multinomial(1, uniform_distribution) == 1)[0][0]
+            # check b agrees with the first observation
+            if (C_det[ind_b, :, y == y_a[:, 0]] > epsilon).any():
+                b_one_hot = np.zeros(nb)
+                b_one_hot[ind_b] = 1
+                break
+
         while True:
             # sample z from initial distribution
             z = np.where(np.random.multinomial(1,initial_distribution)==1)[0][0]
@@ -102,8 +117,17 @@ def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
         for j in range(1000):
             action = np.arange(na)[policy[z].astype(bool)][0]
 
+            Vs.append(V[z])
+            V_bs.append(V_b[b_one_hot == 1][0])
+
             y, reward, done, _ = lg.env.step(action)
             reward_episode.append(reward)
+
+            bn = D_[y]@P_xu[action]@bn
+            bn = bn / np.sum(bn, axis=0)
+            ind_b = np.where((bn == b).all(axis=1))[0][0]
+            b_one_hot = np.zeros(nb)
+            b_one_hot[ind_b] = 1
 
             if len(A.shape) > 3:
                 z = np.where(np.random.multinomial(1, A[z, y, action, :]) == 1)[0][0]
@@ -120,14 +144,27 @@ def eval_performance(policy, A, n_episodes=100, epsilon=1e-8, beta=0.95):
             rets.insert(0, R)
         returns.append(rets[0])
 
-    return np.mean(returns)
+    average_return = np.mean(returns)
+    V_mse = np.linalg.norm(np.array(Vs) - np.array(V_bs))
+    print("Average reward: ", average_return)
+    print("Average V mse", V_mse / len(Vs))
+    return average_return, V_mse/len(Vs)
 
 if __name__ == "__main__":
-    nz = 18
-    seed = 42
+    nz = 13
+    seed = 100
     A, B, initial_distribution, Ot = lg.load_graph(nz, seed, args)
     na = 4
-    policy, v = value_iteration(A, B, nz, na, Ot, discount_factor=0.95)
-    returns = eval_performance(policy, A)
-    print("Performance: ",returns)
+    nb = 15
+    nu = 4
+    C = np.load("reduction_graph/C.npy")
+    C_det = np.load("reduction_graph/C_det.npy")
+    R = np.load("reduction_graph/R.npy")
+    P_ybu = np.load("reduction_graph/P_ybu.npy")
+    y_a = np.load("graph/y_a.npy")
+    D_, P_xu, b = exact_reduction.load_underlying_dynamics()
+    policy, V = value_iteration(A, B, nz, na, Ot, discount_factor=0.95)
+    policy_b, V_b = exact_reduction.value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
+    returns = eval_performance(policy, A, V, V_b)
+    # print("Performance: ",returns)
     # lg.plot_B(B, nz, Ot)
