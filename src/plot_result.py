@@ -14,7 +14,7 @@ nzs = np.arange(7, 14)
 r_s = []
 V_mse_s = []
 for nz in nzs:
-    Q, D, r_bar = exact_reduction.load_reduction_graph(nz)
+    Q, D, r_bar = exact_reduction.load_reduction_graph(nz, output_pred=True)
     B = Q@D.T@np.linalg.inv(D@D.T)
     r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = exact_reduction.value_iteration(B, r, nz, nu)
@@ -28,8 +28,10 @@ plt.plot(nzs, r_s)
 plt.xlabel("AIS dimension")
 plt.ylabel("Average return")
 plt.title("Performance vs Compression Dimension")
+plt.show()
 
 plt.plot(nzs, V_mse_s)
 plt.xlabel("AIS dimension")
 plt.ylabel("V MSE")
 plt.title("Value Function MSE vs Compression Dimension")
+plt.show()

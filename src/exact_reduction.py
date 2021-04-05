@@ -159,7 +159,7 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
         return np.array([Q1.value, Q2.value, Q3.value, Q4.value]), D.value, r_bar.value
 
 
-def AP2ab(nz, nb, nu, C, R, C_det, P_ybu):
+def AP2ab(nz, nb, nu, R, C_det, P_ybu):
     M = 1e6
     Q_det = []
     for k in range(C_det.shape[2]):
@@ -533,9 +533,15 @@ def eval_performance(policy, D, C_det, V, V_b, y_a, na, nb, b, D_, P_xu, B_det=N
     return average_return, V_mse/len(Vs)
 
 
-def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False):
+def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False, AP2ab=False):
     folder_name = "reduction_graph/"
-    if Q_det is not None:
+    if AP2ab:
+        folder_name += "AP2ab/"
+        np.save(folder_name + "Q_{}".format(nz), Q)
+        np.save(folder_name + "D_{}".format(nz), D)
+        np.save(folder_name + "r_fit_{}".format(nz), r_bar)
+        np.save(folder_name + "Q_det_{}".format(nz), Q_det)
+    elif Q_det is not None:
         folder_name += "det/"
         if output_pred:
             np.save(folder_name + "Q_{}_y".format(nz), Q)
@@ -574,19 +580,37 @@ def save_B_r(B, D, r, nz, B_det=None, sample=False):
         np.save(folder_name + "r_{}".format(nz), r)
 
 
-def load_reduction_graph(nz, det=False):
+def load_reduction_graph(nz, det=False, output_pred=False):
     folder_name = "reduction_graph/"
-    if det:
-        folder_name += "det/"
+    if AP2ab:
+        folder_name += "AP2ab/"
         Q = np.load(folder_name + "Q_{}.npy".format(nz))
         D = np.load(folder_name + "D_{}.npy".format(nz))
         r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
         Q_det = np.load(folder_name + "Q_det{}.npy".format(nz))
         return Q_det, Q, D, r_bar
+    elif det:
+        folder_name += "det/"
+        if output_pred:
+            Q = np.load(folder_name + "Q_{}_y.npy".format(nz))
+            D = np.load(folder_name + "D_{}_y.npy".format(nz))
+            r_bar = np.load(folder_name + "r_fit_{}_y.npy".format(nz))
+            Q_det = np.load(folder_name + "Q_det{}_y.npy".format(nz))
+        else:
+            Q = np.load(folder_name + "Q_{}.npy".format(nz))
+            D = np.load(folder_name + "D_{}.npy".format(nz))
+            r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
+            Q_det = np.load(folder_name + "Q_det{}.npy".format(nz))
+        return Q_det, Q, D, r_bar
     else:
-        Q = np.load(folder_name + "Q_{}.npy".format(nz))
-        D = np.load(folder_name + "D_{}.npy".format(nz))
-        r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
+        if output_pred:
+            Q = np.load(folder_name + "Q_{}_y.npy".format(nz))
+            D = np.load(folder_name + "D_{}_y.npy".format(nz))
+            r_bar = np.load(folder_name + "r_fit_{}_y.npy".format(nz))
+        else:
+            Q = np.load(folder_name + "Q_{}.npy".format(nz))
+            D = np.load(folder_name + "D_{}.npy".format(nz))
+            r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
         return Q, D, r_bar
 
 
@@ -633,18 +657,19 @@ if __name__ == "__main__":
         # B, D, r = load_B_r(nz, sample=True)
     else:
         # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
-        # Q, D, r_bar = runGUROBIImpl(nz, nb, nu, C, R)
-        Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det, P_ybu=P_ybu)
+        Q_det, D, r_bar = AP2ab(nz, nb, nu, R, C_det, P_ybu)
+        # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det, P_ybu=P_ybu)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
         # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
-        # r = r.T
+        _, B, _, r = solve_B_r(nz, nb, nu, C, R, D)
+        r = r.T
         if args.save_graph:
-            save_reduction_graph(Q, D, r_bar, nz, Q_det, True)
+            save_reduction_graph(0, D, r_bar, nz, Q_det, True)
             # save_B_r(B, D, r, nz)
 
 
-    B = Q@D.T@np.linalg.inv(D@D.T)
-    r = r_bar.T@D.T@np.linalg.inv(D@D.T)
+    # B = Q@D.T@np.linalg.inv(D@D.T)
+    # r = r_bar.T@D.T@np.linalg.inv(D@D.T)
     policy, V = value_iteration(B, r, nz, nu)
     policy_b, V_b = value_iteration(np.einsum('ijk->kij', C), R.T, nb, nu)
     D_, P_xu, b = load_underlying_dynamics()
