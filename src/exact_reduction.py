@@ -566,8 +566,10 @@ def save_reduction_graph(Q, D, r_bar, nz, Q_det=None, output_pred=False, AP2ab=F
             np.save(folder_name + "r_fit_{}".format(nz), r_bar)
 
 
-def save_B_r(B, D, r, nz, B_det=None, sample=False):
+def save_B_r(B, D, r, nz, B_det=None, stirling=True, sample=False):
     folder_name = "reduction_graph/"
+    if stirling:
+        folder_name += "stirling/"
     if sample:
         folder_name += "sample/"
     if B_det is not None:
@@ -589,7 +591,7 @@ def load_reduction_graph(nz, det=False, output_pred=False, AP2ab=False):
         Q = np.load(folder_name + "Q_{}.npy".format(nz))
         D = np.load(folder_name + "D_{}.npy".format(nz))
         r_bar = np.load(folder_name + "r_fit_{}.npy".format(nz))
-        Q_det = np.load(folder_name + "Q_det{}.npy".format(nz))
+        Q_det = np.load(folder_name + "Q_det_{}.npy".format(nz))
         return Q_det, Q, D, r_bar
     elif det:
         folder_name += "det/"
@@ -597,7 +599,7 @@ def load_reduction_graph(nz, det=False, output_pred=False, AP2ab=False):
             Q = np.load(folder_name + "Q_{}_y.npy".format(nz))
             D = np.load(folder_name + "D_{}_y.npy".format(nz))
             r_bar = np.load(folder_name + "r_fit_{}_y.npy".format(nz))
-            Q_det = np.load(folder_name + "Q_det{}_y.npy".format(nz))
+            Q_det = np.load(folder_name + "Q_det_{}_y.npy".format(nz))
         else:
             Q = np.load(folder_name + "Q_{}.npy".format(nz))
             D = np.load(folder_name + "D_{}.npy".format(nz))
@@ -659,15 +661,15 @@ if __name__ == "__main__":
         # B, D, r = load_B_r(nz, sample=True)
     else:
         # Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R)
-        Q_det, D, r_bar = AP2ab(nz, nb, nu, R, C_det, P_ybu)
+        # Q_det, D, r_bar = AP2ab(nz, nb, nu, R, C_det, P_ybu)
         # Q_det, Q, D, r_bar = runCVXPYImpl(nz, nb, nu, C, R, C_det=C_det, P_ybu=P_ybu)
         # B, D, r = bilinear_alternation(nz, nb, nu, C, R)
-        # [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R, 50000)
-        _, B, _, r = solve_B_r(nz, nb, nu, C, R, D)
+        [B, D, r] = parallel_convex_opt(nz, nb, nu, C, R)
+        # _, B, _, r = solve_B_r(nz, nb, nu, C, R, D)
         r = r.T
         if args.save_graph:
-            save_reduction_graph(0, D, r_bar, nz, Q_det, True)
-            # save_B_r(B, D, r, nz)
+            # save_reduction_graph(0, D, r_bar, nz, Q_det, True)
+            save_B_r(B, D, r, nz)
 
 
     # B = Q@D.T@np.linalg.inv(D@D.T)
