@@ -93,8 +93,13 @@ def runCVXPYImpl(nz, nb, nu, C, R, C_det=None, P_ybu=None):
     for i in range(nz-1):
         f[i] = 1
         W = generate_W(i, nz)
+<<<<<<< HEAD
         print(((W@D_value@f) >= -1e-8).all())
         constraints += [W@D@f >= -1e-8, ]
+=======
+        # print(((W@D_value@f) >= 0).all())
+        constraints += [W@D@f >= 0, ]
+>>>>>>> fe301f0da50602bfb709cc9aaa76474e728c78ce
 
     # Eq 13, 14 enforced on columns of D
     t = cp.Variable(int(nb * (nb - 1) / 2), boolean=True)
